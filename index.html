@@ -129,18 +129,20 @@
         <div class="flex justify-between mt-2 text-[10px] text-gray-500 font-mono">
             <span>00:00</span>
             <span class="text-center flex-1">
-                    <i class="fa-solid fa-hand-pointer mr-1"></i> 点击波形听歌 / 拖动绿色方块选区
-                </span>
+                <i class="fa-solid fa-hand-pointer mr-1"></i> 点击波形听歌 / 拖动绿色方块选区
+            </span>
             <span id="editor-total-duration">--:--</span>
         </div>
 
-        <!-- 参数面板 -->
+        <!-- 参数面板 (修改为分秒格式) -->
         <div class="flex justify-center gap-6 mt-8 text-xs font-mono">
-            <div class="bg-zinc-800 px-3 py-2 rounded text-gray-300">
-                Start: <span id="region-start" class="text-white font-bold">0.00</span>s
+            <div class="bg-zinc-800 px-4 py-3 rounded text-gray-300 flex flex-col items-center min-w-[120px]">
+                <span class="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Start Time</span>
+                <span id="region-start" class="text-white font-bold text-lg">00:00.00</span>
             </div>
-            <div class="bg-zinc-800 px-3 py-2 rounded text-gray-300">
-                Duration: <span id="region-duration" class="text-spotify-green font-bold">0.00</span>s
+            <div class="bg-zinc-800 px-4 py-3 rounded text-gray-300 flex flex-col items-center min-w-[120px]">
+                <span class="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Duration</span>
+                <span id="region-duration" class="text-spotify-green font-bold text-lg">00:00.00</span>
             </div>
         </div>
     </div>
@@ -174,7 +176,7 @@
     </div>
 </div>
 
-<!-- 6. 导出图片生成区 (新设计) -->
+<!-- 6. 导出图片生成区 -->
 <div id="export-canvas">
     <div class="mb-12">
         <h1 class="text-7xl font-black italic tracking-tighter text-white mb-2">SETLIST</h1>
@@ -208,7 +210,7 @@
     let currentEditId = null;
 
     // ==========================================
-    // 1. 播放控制 (修复的计时器逻辑)
+    // 1. 播放控制
     // ==========================================
 
     function playSong(song) {
@@ -247,13 +249,13 @@
         if (!audio.src) return;
         if (playState.isPlaying) {
             audio.pause();
-            clearInterval(playState.timerId); // 彻底停止计时
+            clearInterval(playState.timerId); 
             playState.isPlaying = false;
             document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-play"></i>';
             document.getElementById('player-status').innerText = "Paused";
         } else {
             audio.play();
-            startTimerLoop(); // 恢复计时
+            startTimerLoop(); 
             playState.isPlaying = true;
             document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-pause"></i>';
         }
@@ -273,7 +275,7 @@
     function stopTimerAndAudio() { if (playState.timerId) clearInterval(playState.timerId); audio.pause(); playState.isPlaying = false; }
 
     // ==========================================
-    // 2. 波形编辑器 (全览式 Au 逻辑)
+    // 2. 波形编辑器 (全览式 Au 逻辑 - 分秒显示优化)
     // ==========================================
 
     function openEditor(id) {
@@ -289,17 +291,16 @@
 
         if (ws) ws.destroy();
 
-        // 核心配置：fillParent: true 保证显示整首歌，不滚动
         ws = WaveSurfer.create({
             container: '#waveform-full',
             waveColor: '#555',
-            progressColor: '#fff', // 播放头颜色
-            height: 192, // 48 * 4
+            progressColor: '#fff', 
+            height: 192, 
             barWidth: 2,
             cursorColor: '#1DB954',
             cursorWidth: 1,
-            fillParent: true, // 关键：填满容器，不出现滚动条
-            autoScroll: false, // 禁止滚动
+            fillParent: true, 
+            autoScroll: false, 
             plugins: [ WaveSurfer.Regions.create() ]
         });
 
@@ -311,11 +312,10 @@
             document.getElementById('editor-loading').classList.add('hidden');
             document.getElementById('editor-total-duration').innerText = formatTimeSimple(ws.getDuration());
 
-            // 创建选区
             wsRegion = ws.plugins[0].addRegion({
                 start: song.start,
                 end: song.start + song.duration,
-                color: 'rgba(29, 185, 84, 0.3)', // 经典绿
+                color: 'rgba(29, 185, 84, 0.3)', 
                 drag: true,
                 resize: true
             });
@@ -323,35 +323,35 @@
             updateRegionInfo(wsRegion);
         });
 
-        // 监听：选区变化
         ws.plugins[0].on('region-updated', (region) => {
             wsRegion = region;
             updateRegionInfo(region);
-        });
-
-        // 监听：点击波形非选区部分 (seek)
-        ws.on('interaction', () => {
-            // 如果用户点击波形跳转，我们允许它跳转，方便“试听”
-            // 不需要特殊代码，WaveSurfer 默认支持
         });
 
         ws.on('play', () => document.getElementById('editor-play-btn').innerHTML = '<i class="fa-solid fa-pause"></i>');
         ws.on('pause', () => document.getElementById('editor-play-btn').innerHTML = '<i class="fa-solid fa-play"></i>');
     }
 
-    // 全局播放/暂停 (听歌用)
     function toggleEditorPlay() { if (ws) ws.playPause(); }
 
-    // 仅播放选区 (确认用)
     function previewRegion() {
         if (ws && wsRegion) {
-            wsRegion.play(); // Regions 插件自带的 loop play
+            wsRegion.play(); 
         }
     }
 
+    // 新增：把秒转成 "分:秒.毫秒" 格式
+    function formatTimeDetailed(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        const ms = Math.floor((seconds % 1) * 100); 
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+    }
+
+    // 修改：更新UI显示为分秒格式
     function updateRegionInfo(region) {
-        document.getElementById('region-start').innerText = region.start.toFixed(2);
-        document.getElementById('region-duration').innerText = (region.end - region.start).toFixed(2);
+        document.getElementById('region-start').innerText = formatTimeDetailed(region.start);
+        document.getElementById('region-duration').innerText = formatTimeDetailed(region.end - region.start);
     }
 
     function saveEditor() {
@@ -376,7 +376,7 @@
     }
 
     // ==========================================
-    // 3. 导出图片 (智能排版 + 无横线)
+    // 3. 导出图片
     // ==========================================
 
     function exportImage() {
@@ -388,20 +388,16 @@
         const list = (isRandomMode && playQueue.length) ? playQueue : playlist;
 
         list.forEach((song, i) => {
-            // 解析歌名逻辑 [Name] - [Artist]
             let title = song.name;
             let artist = "";
-            const separator = " - "; // 你可以根据需要改成 "-" 或其他
+            const separator = " - "; 
 
-            // 简单的分割逻辑
             if (title.includes(separator)) {
                 const parts = title.split(separator);
                 title = parts[0];
-                artist = parts.slice(1).join(separator); // 剩下的都是歌手
+                artist = parts.slice(1).join(separator); 
             } else if (title.includes("-")) {
-                // 备用：如果只是短横线
                 const parts = title.split("-");
-                // 只有当分割后长度大于1且看着像名字时
                 if (parts.length > 1) {
                     title = parts[0].trim();
                     artist = parts.slice(1).join("-").trim();
@@ -409,7 +405,6 @@
             }
 
             const li = document.createElement('li');
-            // 使用 grid 或 flex 布局，无 border
             li.className = "flex items-start gap-6";
 
             li.innerHTML = `
@@ -438,7 +433,6 @@
             link.href = canvas.toDataURL();
             link.click();
         }).finally(() => {
-            // 不隐藏，保持移出屏幕状态
         });
     }
 
@@ -502,7 +496,9 @@
                         <span class="text-xs font-mono w-6 text-right ${cur?'text-spotify-green':'text-gray-600'}">${i+1}</span>
                         <div class="flex flex-col overflow-hidden">
                             <span class="text-sm font-medium truncate ${song.file||song.url?'text-white':'text-red-500'}">${song.name}</span>
-                            <span class="text-[9px] text-gray-500 font-mono">${song.start.toFixed(1)}s - ${(song.start+song.duration).toFixed(1)}s</span>
+                            <span class="text-[9px] text-gray-500 font-mono">
+                                ${formatTimeSimple(song.start)} - ${formatTimeSimple(song.start+song.duration)}
+                            </span>
                         </div>
                     </div>
                     ${!isRandomMode ? `<div class="flex gap-3 text-gray-400"><button onclick="openEditor('${song.id}')"><i class="fa-solid fa-pen"></i></button><button onclick="removeSong('${song.id}')"><i class="fa-solid fa-trash"></i></button></div>` : ''}
@@ -552,7 +548,10 @@
     }
 
     function playBeep(f,d,t='sine'){if(!audioCtx)return;const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(audioCtx.destination);o.start();g.gain.exponentialRampToValueAtTime(0.00001,audioCtx.currentTime+d);o.stop(audioCtx.currentTime+d);}
-    function formatTimeSimple(s) { return Math.floor(s/60)+':'+Math.floor(s%60).toString().padStart(2,'0'); }
+    function formatTimeSimple(s) { 
+        if (isNaN(s)) return "0:00";
+        return Math.floor(s/60)+':'+Math.floor(s%60).toString().padStart(2,'0'); 
+    }
 </script>
 </body>
 </html>
