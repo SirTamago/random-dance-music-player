@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RDP Pro v4 (Offline Mode)</title>
+    <title>RDP Pro v5 (Cloud & Link Import)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- WaveSurfer 7 + Regions -->
@@ -28,7 +28,7 @@
             height: auto;
             position: fixed;
             top: 0; left: -9999px;
-            background-color: #080808; /* 极深灰背景 */
+            background-color: #080808;
             padding: 60px;
             box-sizing: border-box;
             font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -40,11 +40,14 @@
 <!-- 1. 顶部栏 -->
 <header class="h-14 flex justify-between items-center px-4 bg-zinc-900 border-b border-zinc-800 z-20">
     <h1 class="text-base font-bold flex items-center gap-2">
-        <i class="fa-solid fa-sliders spotify-green"></i> RDP <span class="text-[10px] bg-zinc-700 px-1 rounded text-gray-300">v4</span>
+        <i class="fa-solid fa-sliders spotify-green"></i> RDP <span class="text-[10px] bg-zinc-700 px-1 rounded text-gray-300">v5</span>
     </h1>
     <div class="flex gap-2">
-        <input type="file" id="config-input" accept=".json" class="hidden" onchange="loadConfig(this.files[0])">
-        <button onclick="document.getElementById('config-input').click()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-file-import"></i> 导入</button>
+        <!-- 隐藏的文件输入框，保留用于本地导入 -->
+        <input type="file" id="config-input" accept=".json" class="hidden" onchange="loadConfigFromFile(this.files[0])">
+        
+        <!-- 修改：点击导入按钮打开弹窗 -->
+        <button onclick="openImportModal()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-file-import"></i> 导入</button>
         <button onclick="saveConfig()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-floppy-disk"></i> 保存</button>
         <button onclick="exportImage()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-image"></i> 图片</button>
     </div>
@@ -57,10 +60,15 @@
             <i class="fa-solid fa-music text-3xl text-zinc-600"></i>
         </div>
         <p class="text-sm text-gray-400 mb-6">MP3 / AAC / JSON Config</p>
-        <label class="bg-white text-black font-bold py-2 px-6 rounded-full cursor-pointer hover:scale-105 transition transform text-sm">
-            添加歌曲
-            <input type="file" multiple accept="audio/*" class="hidden" onchange="handleFiles(this.files)">
-        </label>
+        <div class="flex gap-3">
+             <label class="bg-white text-black font-bold py-2 px-6 rounded-full cursor-pointer hover:scale-105 transition transform text-sm">
+                添加歌曲
+                <input type="file" multiple accept="audio/*" class="hidden" onchange="handleFiles(this.files)">
+            </label>
+            <button onclick="openImportModal()" class="bg-zinc-800 text-white font-bold py-2 px-6 rounded-full hover:bg-zinc-700 transition transform text-sm">
+                导入配置
+            </button>
+        </div>
     </div>
 
     <div id="song-list-container" class="hidden pb-32 pt-2">
@@ -155,12 +163,11 @@
     </div>
 </div>
 
-<!-- 6. 新增：下载进度弹窗 -->
+<!-- 6. 下载进度弹窗 -->
 <div id="download-modal" class="fixed inset-0 bg-black/90 z-[70] hidden flex flex-col items-center justify-center p-8 select-none">
     <i class="fa-solid fa-cloud-arrow-down text-4xl text-spotify-green mb-6 animate-bounce"></i>
     <h2 class="text-2xl font-bold mb-2">Caching Audio...</h2>
     <p class="text-gray-400 text-sm mb-8 text-center max-w-md">Downloading songs to memory for smooth playback.<br>Do not close this tab.</p>
-
     <div class="w-full max-w-md h-2 bg-zinc-800 rounded-full overflow-hidden mb-2">
         <div id="download-bar" class="h-full bg-spotify-green w-0 transition-all duration-300"></div>
     </div>
@@ -168,13 +175,40 @@
         <span id="download-count">0 / 0</span>
         <span id="download-percent">0%</span>
     </div>
-
     <div class="text-xs text-red-500 h-4 mb-4" id="download-error"></div>
-
     <button onclick="cancelDownload()" class="px-6 py-2 rounded-full border border-zinc-600 text-zinc-400 hover:text-white hover:border-white text-xs font-bold transition">CANCEL</button>
 </div>
 
-<!-- 7. 导出图片生成区 -->
+<!-- 7. 新增：导入方式选择弹窗 -->
+<div id="import-modal" class="fixed inset-0 bg-black/90 z-[80] hidden flex flex-col items-center justify-center p-6 modal opacity-0">
+    <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-xl w-full max-w-md shadow-2xl relative">
+        <button onclick="closeImportModal()" class="absolute top-4 right-4 text-gray-500 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+        
+        <h2 class="text-xl font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-file-import text-spotify-green"></i> Import Config</h2>
+
+        <!-- 本地文件 -->
+        <div class="mb-6">
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">From Local File</h3>
+            <button onclick="document.getElementById('config-input').click(); closeImportModal()" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg border border-zinc-700 text-sm font-medium transition flex items-center justify-center gap-2">
+                <i class="fa-solid fa-folder-open"></i> Choose JSON File
+            </button>
+        </div>
+
+        <div class="h-px bg-zinc-800 w-full mb-6"></div>
+
+        <!-- URL导入 -->
+        <div>
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">From URL</h3>
+            <div class="flex gap-2">
+                <input type="text" id="import-url-input" placeholder="https://example.com/playlist.json" class="flex-1 bg-black border border-zinc-700 rounded px-3 py-2 text-sm focus:border-spotify-green focus:outline-none transition">
+                <button onclick="loadConfigFromUrl()" class="bg-spotify-green text-black font-bold px-4 py-2 rounded text-sm hover:scale-105 transition">Load</button>
+            </div>
+            <p id="url-import-status" class="text-[10px] text-gray-500 mt-2 h-4"></p>
+        </div>
+    </div>
+</div>
+
+<!-- 8. 导出图片生成区 -->
 <div id="export-canvas">
     <div class="mb-12">
         <h1 class="text-7xl font-black italic tracking-tighter text-white mb-2">SETLIST</h1>
@@ -201,7 +235,113 @@
     let currentEditId = null;
 
     // ==========================================
-    // 0. 下载管理器 (新增核心功能)
+    // 0. 导入管理器 (新增)
+    // ==========================================
+
+    function openImportModal() {
+        const m = document.getElementById('import-modal');
+        m.classList.remove('hidden');
+        setTimeout(()=>m.classList.remove('opacity-0'), 10);
+        document.getElementById('import-url-input').focus();
+    }
+
+    function closeImportModal() {
+        const m = document.getElementById('import-modal');
+        m.classList.add('opacity-0');
+        setTimeout(()=>m.classList.add('hidden'), 200);
+        document.getElementById('url-import-status').innerText = "";
+    }
+
+    // 从本地文件加载 (原 loadConfig 逻辑)
+    function loadConfigFromFile(file) {
+        if (!file) return;
+        const r = new FileReader();
+        r.onload = e => parseAndLoadConfig(e.target.result);
+        r.readAsText(file);
+    }
+
+    // 从 URL 加载 (新逻辑)
+    async function loadConfigFromUrl() {
+        const url = document.getElementById('import-url-input').value.trim();
+        const status = document.getElementById('url-import-status');
+        if (!url) return;
+
+        status.innerText = "Fetching...";
+        status.className = "text-[10px] text-yellow-500 mt-2 h-4";
+
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("Network response was not ok");
+            const text = await res.text();
+            
+            status.innerText = "Success!";
+            status.className = "text-[10px] text-spotify-green mt-2 h-4";
+            
+            setTimeout(() => {
+                parseAndLoadConfig(text);
+                closeImportModal();
+                document.getElementById('import-url-input').value = ""; // 清空
+            }, 500);
+
+        } catch (e) {
+            console.error(e);
+            status.innerText = "Error: " + e.message;
+            status.className = "text-[10px] text-red-500 mt-2 h-4";
+        }
+    }
+
+    // 统一解析逻辑
+    function parseAndLoadConfig(jsonString) {
+        try {
+            const d = JSON.parse(jsonString);
+            
+            // 数据合并与清洗
+            playlist = d.songs.map(s => {
+                // 1. 保留本地文件
+                const exist = playlist.find(p => p.name === s.name && p.file);
+                
+                // 2. 智能 URL 转换 (Cloudflare Pages 适配)
+                // 如果是 RDP Cloudflare Pages 环境，且配置里有 .mp3 结尾的id
+                // 我们可以自动构建相对路径，解决 CORS
+                let finalUrl = s.url;
+                if (!finalUrl && s.id && !s.file) {
+                    // 默认假设 id 对应文件名 (如果你用这种规范)
+                     finalUrl = `/r2/${s.id}.mp3`; 
+                } else if (finalUrl) {
+                    // 如果 URL 是绝对路径但我们想走代理
+                    // 这里可以根据需要开启，比如替换 r2.dev 域名
+                    // if (finalUrl.includes('r2.dev')) ...
+                }
+
+                return { 
+                    ...s, 
+                    file: exist ? exist.file : null, 
+                    id: s.id || Math.random().toString(36).substr(2,9),
+                    url: finalUrl 
+                };
+            });
+
+            updateUI();
+
+            // 自动检测是否需要下载
+            const needsDl = playlist.filter(s => s.url && !s.file);
+            if (needsDl.length > 0) {
+                if (confirm(`Loaded ${playlist.length} songs.\n${needsDl.length} songs have URLs. Download cache now?`)) {
+                    startDownloadProcess(needsDl);
+                }
+            } else {
+                alert(`Loaded ${playlist.length} songs successfully.`);
+            }
+
+        } catch(e) { 
+            alert("Invalid JSON Format"); 
+            console.error(e);
+        }
+    }
+
+
+    // ==========================================
+    // 1. 下载管理器
     // ==========================================
 
     function forceDownloadCheck() {
@@ -232,27 +372,18 @@
         let completed = 0;
         let errors = 0;
 
-        // update UI init
         countTxt.innerText = `0 / ${total}`;
         bar.style.width = '0%';
 
-        // 每次并发下载3个，避免浏览器卡死
         const batchSize = 3; 
         
         for (let i = 0; i < total; i += batchSize) {
             if (signal.aborted) break;
-
             const batch = itemsToDownload.slice(i, i + batchSize);
             const promises = batch.map(song => fetchAndCacheSong(song, signal));
-            
             const results = await Promise.all(promises);
-            
-            results.forEach(res => {
-                if (res) completed++;
-                else errors++;
-            });
+            results.forEach(res => { if (res) completed++; else errors++; });
 
-            // Update UI
             const pct = Math.round((completed + errors) / total * 100);
             bar.style.width = `${pct}%`;
             countTxt.innerText = `${completed + errors} / ${total}`;
@@ -262,10 +393,8 @@
         isDownloading = false;
         setTimeout(() => {
             modal.classList.add('hidden');
-            renderList(); // 刷新列表状态
-            if (errors > 0) {
-                alert(`Download finished. ${completed} success, ${errors} failed (Check CORS or URL).`);
-            }
+            renderList();
+            if (errors > 0) alert(`Download finished. ${completed} success, ${errors} failed.`);
         }, 500);
     }
 
@@ -274,8 +403,6 @@
             const response = await fetch(song.url, { signal });
             if (!response.ok) throw new Error("Net Error");
             const blob = await response.blob();
-            // 关键：把下载的 blob 伪装成 File 对象存入 playlist
-            // 这样播放器逻辑就认为它是本地文件，读取速度极快
             song.file = new File([blob], song.name + ".mp3", { type: "audio/mpeg" });
             return true;
         } catch (e) {
@@ -289,29 +416,23 @@
             downloadAbortController.abort();
             isDownloading = false;
             document.getElementById('download-modal').classList.add('hidden');
-            alert("Download cancelled. Some songs may still stream from URL.");
         }
     }
 
 
     // ==========================================
-    // 1. 播放控制
+    // 2. 播放控制
     // ==========================================
 
     function playSong(song) {
         let src = null;
-        // 优先使用内存中的 File (无论是本地上传的还是刚刚下载的)
-        if (song.file) {
-            src = URL.createObjectURL(song.file);
-        } else if (song.url) {
-            src = song.url; // 降级：如果没下载成功，还是尝试用 URL
-        }
+        if (song.file) src = URL.createObjectURL(song.file);
+        else if (song.url) src = song.url;
 
         if (!src) { playNext(); return; }
 
         audio.src = src;
         audio.currentTime = song.start;
-
         playState.remainingTime = song.duration;
         playState.isPlaying = true;
 
@@ -366,22 +487,19 @@
     function stopTimerAndAudio() { if (playState.timerId) clearInterval(playState.timerId); audio.pause(); playState.isPlaying = false; }
 
     // ==========================================
-    // 2. 编辑器
+    // 3. 编辑器
     // ==========================================
 
     function openEditor(id) {
         const song = playlist.find(s => s.id === id);
         if (!song) return;
         currentEditId = id;
-
         const modal = document.getElementById('editor-modal');
         modal.classList.remove('hidden');
         setTimeout(() => modal.classList.remove('opacity-0'), 10);
         document.getElementById('editor-title').innerText = song.name;
         document.getElementById('editor-loading').classList.remove('hidden');
-
         if (ws) ws.destroy();
-
         ws = WaveSurfer.create({
             container: '#waveform-full',
             waveColor: '#555',
@@ -394,17 +512,13 @@
             autoScroll: false, 
             plugins: [ WaveSurfer.Regions.create() ]
         });
-
         let src = null;
         if (song.file) src = URL.createObjectURL(song.file);
         else if (song.url) src = song.url;
-
         ws.load(src);
-
         ws.on('ready', () => {
             document.getElementById('editor-loading').classList.add('hidden');
             document.getElementById('editor-total-duration').innerText = formatTimeSimple(ws.getDuration());
-
             wsRegion = ws.plugins[0].addRegion({
                 start: song.start,
                 end: song.start + song.duration,
@@ -414,7 +528,6 @@
             });
             updateRegionInfo(wsRegion);
         });
-
         ws.plugins[0].on('region-updated', (region) => { wsRegion = region; updateRegionInfo(region); });
         ws.on('play', () => document.getElementById('editor-play-btn').innerHTML = '<i class="fa-solid fa-pause"></i>');
         ws.on('pause', () => document.getElementById('editor-play-btn').innerHTML = '<i class="fa-solid fa-play"></i>');
@@ -422,19 +535,16 @@
 
     function toggleEditorPlay() { if (ws) ws.playPause(); }
     function previewRegion() { if (ws && wsRegion) wsRegion.play(); }
-    
     function formatTimeDetailed(seconds) {
         const m = Math.floor(seconds / 60);
         const s = Math.floor(seconds % 60);
         const ms = Math.floor((seconds % 1) * 100); 
         return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     }
-
     function updateRegionInfo(region) {
         document.getElementById('region-start').innerText = formatTimeDetailed(region.start);
         document.getElementById('region-duration').innerText = formatTimeDetailed(region.end - region.start);
     }
-
     function saveEditor() {
         const song = playlist.find(s => s.id === currentEditId);
         if (song && wsRegion) {
@@ -444,7 +554,6 @@
             closeEditor();
         }
     }
-
     function closeEditor() {
         if (ws) ws.pause();
         const modal = document.getElementById('editor-modal');
@@ -453,7 +562,7 @@
     }
 
     // ==========================================
-    // 3. 基础 & 导出
+    // 4. 基础 & 导出
     // ==========================================
 
     function exportImage() {
@@ -462,18 +571,15 @@
         const ul = document.getElementById('export-list-ul');
         ul.innerHTML = '';
         const list = (isRandomMode && playQueue.length) ? playQueue : playlist;
-
         list.forEach((song, i) => {
             let title = song.name; let artist = ""; const separator = " - "; 
             if (title.includes(separator)) { const parts = title.split(separator); title = parts[0]; artist = parts.slice(1).join(separator); } 
             else if (title.includes("-")) { const parts = title.split("-"); if (parts.length > 1) { title = parts[0].trim(); artist = parts.slice(1).join("-").trim(); } }
-
             const li = document.createElement('li');
             li.className = "flex items-start gap-6";
             li.innerHTML = `<span class="text-3xl font-black text-zinc-700 font-mono w-16 text-right pt-1">${String(i + 1).padStart(2, '0')}</span><div class="flex flex-col"><span class="text-xl font-bold text-white leading-tight tracking-tight">${title}</span>${artist ? `<span class="text-4xl text-zinc-500 font-medium mt-1 tracking-wide">${artist}</span>` : ''}</div>`;
             ul.appendChild(li);
         });
-
         container.style.display = 'block';
         html2canvas(container, { backgroundColor: "#080808", scale: 2, useCORS: true }).then(canvas => {
             const link = document.createElement('a'); link.download = `RDP_List_${Date.now()}.png`; link.href = canvas.toDataURL(); link.click();
@@ -489,31 +595,6 @@
             else playlist.push({ id: Math.random().toString(36).substr(2,9), name: cleanName, file: file, start: 0, duration: 30 });
         });
         updateUI();
-    }
-
-    function loadConfig(file) {
-        if (!file) return;
-        const r = new FileReader();
-        r.onload = e => {
-            try {
-                const d = JSON.parse(e.target.result);
-                playlist = d.songs.map(s => {
-                    // 保留之前的 Blob 如果名字一样 (用于重复导入配置)
-                    const exist = playlist.find(p => p.name === s.name && p.file);
-                    return { ...s, file: exist ? exist.file : null, id: s.id || Math.random().toString(36).substr(2,9) };
-                });
-                updateUI();
-                
-                // --- 自动检测下载 ---
-                const needsDl = playlist.filter(s => s.url && !s.file);
-                if (needsDl.length > 0) {
-                    if (confirm(`Imported ${needsDl.length} songs with remote URLs.\nDownload now for smooth playback?`)) {
-                        startDownloadProcess(needsDl);
-                    }
-                }
-            } catch(e){ alert("JSON Error"); }
-        };
-        r.readAsText(file);
     }
 
     function saveConfig() {
@@ -535,15 +616,12 @@
         const ul = document.getElementById('song-list');
         ul.innerHTML = '';
         document.getElementById('list-title').innerText = isRandomMode ? "QUEUE" : "EDIT";
-
         list.forEach((song, i) => {
             const cur = (isRandomMode && i === currentIndex);
-            // 状态图标：云端 / 本地
             const isLocal = !!song.file;
             const statusIcon = isLocal 
                 ? '<i class="fa-solid fa-check text-spotify-green" title="Cached Locally"></i>' 
                 : '<i class="fa-solid fa-cloud text-gray-500" title="Streamed from URL"></i>';
-
             const li = document.createElement('li');
             li.className = `flex justify-between p-3 rounded hover:bg-zinc-800 border-l-2 ${cur ? 'bg-zinc-800 border-spotify-green' : 'border-transparent'}`;
             li.innerHTML = `
@@ -571,12 +649,10 @@
 
     function startRandomMode() {
         if (playlist.length === 0) return;
-        // 检查是否还有未缓存的
         const uncached = playlist.filter(s => s.url && !s.file).length;
         if (uncached > 0) {
             if (!confirm(`${uncached} songs are not cached and will stream from URL (might be slow). Start anyway?`)) return;
         }
-
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
         playQueue = [...playlist].sort(() => Math.random() - 0.5);
