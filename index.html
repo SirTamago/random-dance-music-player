@@ -939,6 +939,9 @@
     // 5. 图片导出 (修复渲染失败与长文件名问题)
     // ==========================================
 
+    // ==========================================
+    // 修改后的图片导出 (完整歌名 + 时间轴)
+    // ==========================================
     function exportImage() {
         const listToExport = (isRandomMode && playQueue.length) ? playQueue : playlist;
         if (listToExport.length === 0) return alert("List empty");
@@ -948,43 +951,56 @@
         const ul = document.getElementById('export-list-ul');
         ul.innerHTML = '';
         
+        // 混音时间计算 (用于图片显示)
+        let mixCurrentTime = 0;
+        const MIX_BEEP = 3.0; 
+        const MIX_GAP = 0.5;
+
         listToExport.forEach((song, i) => {
-            let title = song.name; 
-            let artist = ""; 
-            const separator = " - "; 
-            if (title.includes(separator)) { 
-                const parts = title.split(separator); title = parts[0]; artist = parts.slice(1).join(separator); 
-            } else if (title.includes("-")) { 
-                const parts = title.split("-"); 
-                if (parts.length > 1) { title = parts[0].trim(); artist = parts.slice(1).join("-").trim(); } 
+            // 1. 计算时间字符串
+            let timeDisplay = "";
+            if (isRandomMode) {
+                const startSec = mixCurrentTime + MIX_BEEP;
+                timeDisplay = formatTimeSimple(startSec);
+                mixCurrentTime += (MIX_BEEP + song.duration + MIX_GAP);
+            } else {
+                // 非随机模式显示时长
+                timeDisplay = formatTimeSimple(song.duration);
             }
 
+            // 2. 直接使用完整歌名，不拆分
+            const fullName = song.name;
+
             const li = document.createElement('li');
-            li.className = "flex items-start gap-6 border-b border-zinc-900/50 pb-4";
-            // 使用 break-all 和 whitespace-normal 强制换行
+            li.className = "flex items-baseline gap-4 border-b border-zinc-800 pb-2 mb-2";
+            
+            // 布局：序号(大) | 时间(绿) | 歌名(白, 换行)
             li.innerHTML = `
-                <span class="text-3xl font-black text-zinc-700 font-mono w-16 text-right pt-1 flex-shrink-0">${String(i + 1).padStart(2, '0')}</span>
-                <div class="flex flex-col min-w-0 flex-1">
-                    <span class="text-xl font-bold text-white leading-tight tracking-tight break-words whitespace-normal">${title}</span>
-                    ${artist ? `<span class="text-3xl text-zinc-500 font-medium mt-1 tracking-wide break-words whitespace-normal">${artist}</span>` : ''}
+                <span class="text-4xl font-black text-zinc-700 font-mono w-16 text-right flex-shrink-0">${String(i + 1).padStart(2, '0')}</span>
+                
+                <span class="text-xl font-bold text-spotify-green font-mono w-20 text-center flex-shrink-0 bg-zinc-900/50 rounded py-1">
+                    ${timeDisplay}
+                </span>
+
+                <div class="flex-1 min-w-0">
+                    <span class="text-2xl font-bold text-white leading-snug tracking-tight break-all whitespace-normal block">
+                        ${fullName}
+                    </span>
                 </div>
             `;
             ul.appendChild(li);
         });
 
-        // 临时显示
+        // 渲染流程
         wrapper.style.opacity = '1';
         wrapper.style.height = 'auto'; 
         
-        // 增加 scale 提高清晰度，增加 windowHeight 确保渲染完整
-        // 注意：html2canvas 对过于巨大的画布有限制，如果列表超过100首可能会截断，但这已经是浏览器极限了
         html2canvas(container, { 
             backgroundColor: "#080808", 
             scale: 2, 
             useCORS: true,
-            windowWidth: 1000, // 虚拟宽度
+            windowWidth: 1000, 
         }).then(canvas => {
-            // 恢复隐藏
             wrapper.style.opacity = '0';
             wrapper.style.height = '0';
             
@@ -1052,14 +1068,21 @@
         renderList();
     }
 
+    // ==========================================
+    // 修改后的列表渲染 (支持混音时间轴显示)
+    // ==========================================
     function renderList() {
-        // 如果是随机模式，显示随机队列，否则显示主列表
         const list = isRandomMode ? playQueue : playlist;
         const ul = document.getElementById('song-list');
         ul.innerHTML = '';
         
+        // 混音时间轴计算变量
+        let mixCurrentTime = 0;
+        const MIX_BEEP = 3.0; // 估算倒计时时长
+        const MIX_GAP = 0.5;  // 估算间隔时长
+
         if (isRandomMode) {
-            document.getElementById('list-title').innerText = "RANDOM QUEUE";
+            document.getElementById('list-title').innerText = "MIX TIMELINE";
             document.getElementById('list-title').className = "text-spotify-green text-[10px] font-bold uppercase tracking-widest";
         } else {
             document.getElementById('list-title').innerText = "EDIT SETLIST";
@@ -1072,24 +1095,43 @@
             const statusIcon = isLocal 
                 ? '<i class="fa-solid fa-check text-spotify-green" title="Cached Locally"></i>' 
                 : '<i class="fa-solid fa-cloud text-gray-500" title="Streamed from URL"></i>';
+
+            // --- 时间轴逻辑 ---
+            let timePrefix = "";
+            let timeBadge = ""; // 用于显示在序号旁边的胶囊
+            
+            if (isRandomMode) {
+                // 当前歌曲在混音中的开始时间 = 累加时间 + 倒计时时间
+                const startSec = mixCurrentTime + MIX_BEEP;
+                const startStr = formatTimeSimple(startSec);
+                
+                // 格式：[01] [00:03] 歌名
+                timePrefix = `<span class="text-spotify-green font-mono font-bold mr-2 text-xs">[${startStr}]</span>`;
+                
+                // 累加：这一段的总占用 = 倒计时 + 歌曲 + 间隔
+                mixCurrentTime += (MIX_BEEP + song.duration + MIX_GAP);
+            }
+            // ----------------
+
             const li = document.createElement('li');
             li.className = `flex justify-between p-3 rounded hover:bg-zinc-800 border-l-2 ${cur ? 'bg-zinc-800 border-spotify-green' : 'border-transparent'}`;
+            
             li.innerHTML = `
                     <div class="flex gap-3 overflow-hidden flex-1 cursor-pointer" onclick="!isRandomMode && openEditor('${song.id}')">
-                        <span class="text-xs font-mono w-6 text-right ${cur?'text-spotify-green':'text-gray-600'}">${i+1}</span>
-                        <div class="flex flex-col overflow-hidden">
+                        <span class="text-xs font-mono w-6 text-right pt-0.5 ${cur?'text-spotify-green':'text-gray-600'}">${i+1}</span>
+                        <div class="flex flex-col overflow-hidden w-full">
                             <span class="text-sm font-medium truncate ${song.file||song.url?'text-white':'text-red-500'}">
-                                ${song.name}
+                                ${timePrefix}${song.name}
                             </span>
-                            <div class="flex items-center gap-2">
-                                <span class="text-[9px] text-gray-500 font-mono">
-                                    ${formatTimeSimple(song.start)} - ${formatTimeSimple(song.start+song.duration)}
+                            <div class="flex items-center gap-2 mt-1">
+                                <span class="text-[9px] text-gray-500 font-mono bg-zinc-900 px-1 rounded border border-zinc-800">
+                                    Seg: ${formatTimeSimple(song.duration)}s
                                 </span>
                                 <span class="text-[9px]">${statusIcon}</span>
                             </div>
                         </div>
                     </div>
-                    ${!isRandomMode ? `<div class="flex gap-3 text-gray-400"><button onclick="openEditor('${song.id}')"><i class="fa-solid fa-pen"></i></button><button onclick="removeSong('${song.id}')"><i class="fa-solid fa-trash"></i></button></div>` : ''}
+                    ${!isRandomMode ? `<div class="flex gap-3 text-gray-400 items-center"><button onclick="openEditor('${song.id}')"><i class="fa-solid fa-pen"></i></button><button onclick="removeSong('${song.id}')"><i class="fa-solid fa-trash"></i></button></div>` : ''}
                 `;
             ul.appendChild(li);
         });
