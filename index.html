@@ -333,31 +333,67 @@
         }
     }
 
+    // ==========================================
+    // 修复：更智能的匹配逻辑，且不再乱生成URL
+    // ==========================================
     function parseAndLoadConfig(jsonString) {
         try {
             const d = JSON.parse(jsonString);
+            
+            // 1. 先把当前已有的本地文件整理出来，做一个“文件池”
+            // key 使用 "小写 + 去除空格" 的名称，提高匹配率
+            const filePool = {};
+            playlist.forEach(p => {
+                if (p.file) {
+                    // 比如 "My Song.mp3" -> "mysong"
+                    const simpleName = p.name.toLowerCase().replace(/\s+/g, '');
+                    filePool[simpleName] = p.file;
+                    // 同时保留原始名字匹配，以防万一
+                    filePool[p.name] = p.file;
+                }
+            });
+
+            // 2. 解析新配置
             playlist = d.songs.map(s => {
-                const exist = playlist.find(p => p.name === s.name && p.file);
-                let finalUrl = s.url;
-                if (!finalUrl && s.id && !s.file) finalUrl = `/r2/${s.id}.mp3`; 
+                const cleanName = s.name.toLowerCase().replace(/\s+/g, '');
+                
+                // 尝试从文件池里找文件
+                const matchedFile = filePool[cleanName] || filePool[s.name];
+
+                // 处理 URL：只有当 JSON 里明确写了 url 时才保留
+                // 如果是 null，就保持 null，绝对不要自动生成 /r2/ 链接
+                let finalUrl = s.url || null; 
 
                 return { 
                     ...s, 
-                    file: exist ? exist.file : null, 
+                    file: matchedFile || null, // 如果找到文件就挂载，没找到就是 null
                     id: s.id || Math.random().toString(36).substr(2,9),
-                    url: finalUrl 
+                    url: finalUrl
                 };
             });
+
             stopAll();
             updateUI();
+
+            // 3. 只有当确实有 URL 且没有本地文件时，才提示下载
             const needsDl = playlist.filter(s => s.url && !s.file);
+            
             if (needsDl.length > 0) {
-                if (confirm(`Loaded ${playlist.length} songs.\n${needsDl.length} songs have URLs. Download cache now?`)) {
+                if (confirm(`Loaded ${playlist.length} songs.\n${needsDl.length} songs have remote URLs. Download cache now?`)) {
                     startDownloadProcess(needsDl);
                 }
             } else {
-                alert(`Loaded ${playlist.length} songs successfully.`);
+                // 如果没有需要下载的，也提示一下成功
+                // 检查是否有缺失文件的情况 (既没文件也没URL)
+                const missing = playlist.filter(s => !s.url && !s.file).length;
+                if (missing > 0) {
+                    alert(`Loaded ${playlist.length} songs.\nNote: ${missing} songs have no audio file (names didn't match). Please drag local files again to fix.`);
+                } else {
+                    // 完美情况
+                    console.log("Config loaded, all files matched.");
+                }
             }
+
         } catch(e) { 
             alert("Invalid JSON Format"); 
             console.error(e);
@@ -944,10 +980,34 @@
     function handleFiles(files) {
         if (!files.length) return;
         Array.from(files).forEach(file => {
-            const cleanName = file.name.replace(/\.[^/.]+$/, "");
-            const existing = playlist.find(s => s.name === cleanName && !s.file && !s.url);
-            if (existing) existing.file = file;
-            else playlist.push({ id: Math.random().toString(36).substr(2,9), name: cleanName, file: file, start: 0, duration: 30 });
+            // 获取文件名，去掉后缀
+            const rawName = file.name.replace(/\.[^/.]+$/, "");
+            // 生成简化名：小写、去空格
+            const simpleName = rawName.toLowerCase().replace(/\s+/g, '');
+
+            // 尝试寻找匹配的歌曲
+            // 1. 名字完全一样
+            // 2. 简化名一样
+            // 3. 既没有文件也没有URL的“空壳”歌曲
+            const existing = playlist.find(s => {
+                if (s.file || s.url) return false; // 已经有资源的就不覆盖了
+                const sSimple = s.name.toLowerCase().replace(/\s+/g, '');
+                return s.name === rawName || sSimple === simpleName;
+            });
+
+            if (existing) {
+                existing.file = file; // 匹配成功，挂载文件
+            } else {
+                // 没匹配上，作为新歌添加
+                playlist.push({ 
+                    id: Math.random().toString(36).substr(2,9), 
+                    name: rawName, 
+                    file: file, 
+                    start: 0, 
+                    duration: 30,
+                    url: null
+                });
+            }
         });
         updateUI();
     }
