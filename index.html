@@ -634,26 +634,44 @@
     // === 音频混音导出 (核心新功能) ===
     // === 修复后的混音导出函数 ===
     // 3. 修复后的 主导出函数
+    // ==========================================
+    // 修复：解除时长限制的导出函数
+    // ==========================================
     async function startMixExport() {
         if (!playQueue.length) return;
-        if (!confirm(`Export mix of ${playQueue.length} songs?\nThis will merge them into a single WAV file.`)) return;
+        
+        // 预估时长
+        let totalSeconds = 0;
+        const GAP = 3.5; 
+        playQueue.forEach(s => totalSeconds += (s.duration + GAP));
+        const estimatedMins = Math.floor(totalSeconds / 60);
+
+        if (!confirm(`Export mix of ${playQueue.length} songs?\nEst. Duration: ${estimatedMins} mins.\n\nNote: Very long mixes may crash the browser (Out of Memory).`)) return;
 
         showProcessModal("Exporting Mix...", "Initializing Audio Context...");
         
         try {
-            // 1. 初始化离线上下文
             const SAMPLE_RATE = 44100;
-            let totalSeconds = 0;
-            const GAP = 3.5; 
-            playQueue.forEach(s => totalSeconds += (s.duration + GAP));
             
-            // 安全限制：防止时长过长导致内存崩溃 (限制在 1小时以内)
+            // --- 修改点：不再强制拦截，改为警告 ---
             if(totalSeconds > 3600) {
-                 alert("Setlist too long for browser export (Max 1 hour).");
-                 return hideProcessModal();
+                 const proceed = confirm(`⚠️ WARNING: The mix is ${estimatedMins} minutes long.\n\nRendering this in a browser consumes HUGE memory (2GB+).\nIt might crash or freeze your tab.\n\nDo you want to try anyway?`);
+                 if(!proceed) {
+                     hideProcessModal();
+                     return;
+                 }
             }
+            // ------------------------------------
 
-            const offlineCtx = new OfflineAudioContext(2, Math.ceil(totalSeconds * SAMPLE_RATE), SAMPLE_RATE);
+            // 尝试创建上下文，如果由于太长导致浏览器直接拒绝，这里会报错
+            let offlineCtx;
+            try {
+                offlineCtx = new OfflineAudioContext(2, Math.ceil(totalSeconds * SAMPLE_RATE), SAMPLE_RATE);
+            } catch(err) {
+                alert(`Browser Error: Cannot allocate memory for ${estimatedMins} minutes.\nTry exporting fewer songs at a time.`);
+                hideProcessModal();
+                return;
+            }
             
             // 2. 准备倒计时音频 (Beep)
             let beepBuffer = null;
@@ -664,12 +682,10 @@
                     const arrayBuffer = await customBeepFile.arrayBuffer();
                     beepBuffer = await decodeAudioDataSafe(offlineCtx, arrayBuffer);
                 } else {
-                    // 关键修复：确保在这里 await，拿到真正的 Buffer
                     beepBuffer = await createDefaultBeepBuffer(offlineCtx);
                 }
             } catch(e) {
                 console.warn("Beep generation failed:", e);
-                // 如果生成失败，就不使用提示音，但不阻断流程
                 beepBuffer = null; 
             }
 
@@ -681,15 +697,15 @@
                 const song = playQueue[i];
                 document.getElementById('process-desc').innerText = `Processing: ${song.name}`;
                 
-                // A. 插入倒计时 (如果有的话)
+                // A. 插入倒计时
                 if (beepBuffer instanceof AudioBuffer) {
                     const beepSrc = offlineCtx.createBufferSource();
-                    beepSrc.buffer = beepBuffer; // 这里现在安全了
+                    beepSrc.buffer = beepBuffer;
                     beepSrc.connect(offlineCtx.destination);
                     beepSrc.start(currentTime);
                     currentTime += beepBuffer.duration;
                 } else {
-                    currentTime += 3.0; // Fallback gap
+                    currentTime += 3.0; // Fallback
                 }
 
                 // B. 加载并插入歌曲
@@ -703,7 +719,6 @@
                     
                     if (fileBlob) {
                         const ab = await fileBlob.arrayBuffer();
-                        // 使用 safe decoder
                         songBuffer = await decodeAudioDataSafe(offlineCtx, ab);
                     }
                 } catch(e) {
@@ -719,11 +734,17 @@
                 }
 
                 currentTime += 0.5; // 小间隔
+                
+                // 内存优化尝试：手动释放 blob 引用（微小帮助）
+                songBuffer = null; 
+
                 updateProcessBar(i + 1, playQueue.length);
             }
 
             // 4. 渲染导出
-            document.getElementById('process-desc').innerText = "Rendering Final Mix...";
+            document.getElementById('process-desc').innerText = "Rendering (This may take a while)...";
+            
+            // 开始渲染，这是最容易崩溃的一步
             const renderedBuffer = await offlineCtx.startRendering();
 
             // 5. 生成 WAV 下载
@@ -742,7 +763,12 @@
 
         } catch (e) {
             console.error(e);
-            alert("Export Error: " + e.message);
+            // 捕获内存不足错误
+            if (e.message && e.message.includes("memory")) {
+                alert("Export Crashed: Out of Memory.\nThe setlist is too long for this browser.");
+            } else {
+                alert("Export Error: " + e.message);
+            }
             hideProcessModal();
         }
     }
