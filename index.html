@@ -596,6 +596,7 @@
     }
 
     // === 音频混音导出 (核心新功能) ===
+    // === 修复后的混音导出函数 ===
     async function startMixExport() {
         if (!playQueue.length) return;
         if (!confirm(`Export mix of ${playQueue.length} songs?\nThis will merge them into a single WAV file with countdowns.`)) return;
@@ -605,26 +606,29 @@
         try {
             // 1. 初始化离线上下文
             const SAMPLE_RATE = 44100;
-            // 估算总时长：所有歌时长 + 间隔(假设3.5s)
             let totalSeconds = 0;
             const GAP = 3.5; 
             playQueue.forEach(s => totalSeconds += (s.duration + GAP));
             
-            // 浏览器限制检查（有些浏览器不支持过长的离线渲染）
-            // 30分钟 = 1800秒。绝大多数浏览器可以。
-            
+            // 浏览器限制检查
             const offlineCtx = new OfflineAudioContext(2, Math.ceil(totalSeconds * SAMPLE_RATE), SAMPLE_RATE);
             
             // 2. 加载倒计时音频
             let beepBuffer = null;
             if (customBeepFile) {
-                const arrayBuffer = await customBeepFile.arrayBuffer();
-                beepBuffer = await offlineCtx.decodeAudioData(arrayBuffer);
+                try {
+                    const arrayBuffer = await customBeepFile.arrayBuffer();
+                    // 复制一份 arrayBuffer 以防被占用
+                    beepBuffer = await offlineCtx.decodeAudioData(arrayBuffer.slice(0)); 
+                } catch(e) {
+                    alert("Custom beep file error: " + e.message);
+                    return hideProcessModal();
+                }
             } else {
-                // 没有自定义音频，我们将在渲染循环中合成，或者生成一个小的Buffer
-                // 为了简单，我们只在合成器里做简单的 beep，
-                // 但 OfflineCtx 的合成 beep 比较麻烦，最好是预先渲染一段 beep buffer。
-                beepBuffer = createDefaultBeepBuffer(offlineCtx);
+                // =============== 修复点在这里 ===============
+                // 必须加 await，因为渲染是异步的
+                beepBuffer = await createDefaultBeepBuffer(offlineCtx);
+                // ==========================================
             }
 
             // 3. 逐个加载并安排歌曲
@@ -645,39 +649,36 @@
                     }
                     if (fileBlob) {
                         const ab = await fileBlob.arrayBuffer();
-                        // 复制一份 arrayBuffer 因为 decode 会 detach 它
+                        // 同样的，decodeAudioData 也是异步的，并且建议 slice 复制一份
                         songBuffer = await offlineCtx.decodeAudioData(ab.slice(0));
                     }
                 } catch(e) {
-                    console.error("Decode error", e);
+                    console.error("Decode error for " + song.name, e);
+                    // 如果这首歌解析失败，我们跳过它，继续下一首，而不是直接报错停止
                 }
 
-                // A. 插入倒计时 (第一首前面也要吗？RDP通常是每一段前面都有)
+                // A. 插入倒计时
                 if (beepBuffer) {
                     const beepSrc = offlineCtx.createBufferSource();
                     beepSrc.buffer = beepBuffer;
                     beepSrc.connect(offlineCtx.destination);
                     beepSrc.start(currentTime);
-                    // 假设beep长度大概3秒，我们让这3秒作为间隔
                     currentTime += (beepBuffer.duration > 0 ? beepBuffer.duration : 3);
                 } else {
-                    currentTime += 3; // Fallback
+                    currentTime += 3;
                 }
 
-                // B. 插入歌曲
+                // B. 插入歌曲 (只有当 songBuffer 成功解析时才插入)
                 if (songBuffer) {
                     const songSrc = offlineCtx.createBufferSource();
                     songSrc.buffer = songBuffer;
                     songSrc.connect(offlineCtx.destination);
                     
-                    // 裁剪
                     songSrc.start(currentTime, song.start, song.duration);
                     currentTime += song.duration;
                 }
 
-                // 稍微增加一点空隙
-                currentTime += 0.5;
-
+                currentTime += 0.5; // 歌曲之间的微小空隙
                 updateProcessBar(i + 1, playQueue.length);
             }
 
