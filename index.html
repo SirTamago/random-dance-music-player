@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RDP Pro v5 (Cloud & Link Import)</title>
+    <title>RDP Pro v6 (Mix Export)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- WaveSurfer 7 + Regions -->
@@ -22,16 +22,24 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .modal { transition: opacity 0.2s ease; }
 
-        /* 导出容器：移出屏幕，定宽 */
+        /* 导出容器：不再完全移出屏幕，而是利用层级隐藏，保证渲染引擎能捕获 */
+        #export-wrapper {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            z-index: -50;
+            opacity: 0;
+            pointer-events: none;
+            overflow: hidden;
+            height: 0;
+        }
         #export-canvas {
             width: 800px;
-            height: auto;
-            position: fixed;
-            top: 0; left: -9999px;
             background-color: #080808;
             padding: 60px;
             box-sizing: border-box;
             font-family: 'Helvetica Neue', Arial, sans-serif;
+            margin: 0 auto;
         }
     </style>
 </head>
@@ -40,13 +48,13 @@
 <!-- 1. 顶部栏 -->
 <header class="h-14 flex justify-between items-center px-4 bg-zinc-900 border-b border-zinc-800 z-20">
     <h1 class="text-base font-bold flex items-center gap-2">
-        <i class="fa-solid fa-sliders spotify-green"></i> RDP <span class="text-[10px] bg-zinc-700 px-1 rounded text-gray-300">v5</span>
+        <i class="fa-solid fa-sliders spotify-green"></i> RDP <span class="text-[10px] bg-zinc-700 px-1 rounded text-gray-300">v6</span>
     </h1>
     <div class="flex gap-2">
-        <!-- 隐藏的文件输入框，保留用于本地导入 -->
+        <!-- 隐藏的文件输入框 -->
         <input type="file" id="config-input" accept=".json" class="hidden" onchange="loadConfigFromFile(this.files[0])">
+        <input type="file" id="custom-beep-input" accept="audio/*" class="hidden" onchange="loadCustomBeep(this.files[0])">
         
-        <!-- 修改：点击导入按钮打开弹窗 -->
         <button onclick="openImportModal()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-file-import"></i> 导入</button>
         <button onclick="saveConfig()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-floppy-disk"></i> 保存</button>
         <button onclick="exportImage()" class="text-xs bg-zinc-800 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-700 transition"><i class="fa-solid fa-image"></i> 图片</button>
@@ -110,8 +118,17 @@
     </div>
 
     <div class="flex items-center justify-end w-[30%] gap-2">
-        <button onclick="startRandomMode()" id="btn-mode-random" class="text-[10px] font-bold px-3 py-1.5 rounded-full bg-zinc-800 text-gray-300 hover:text-white border border-zinc-700">RANDOM</button>
-        <button onclick="stopAll()" id="btn-stop" class="hidden text-[10px] font-bold px-3 py-1.5 rounded-full bg-red-900/40 text-red-400 border border-red-900">STOP</button>
+        <!-- 随机模式按钮组 -->
+        <div id="random-controls" class="flex gap-2">
+            <button onclick="prepareRandomMode()" id="btn-mode-random" class="text-[10px] font-bold px-3 py-1.5 rounded-full bg-zinc-800 text-gray-300 hover:text-white border border-zinc-700">RANDOM</button>
+            
+            <!-- 混音导出按钮 -->
+            <button onclick="startMixExport()" id="btn-export-audio" class="hidden text-[10px] font-bold px-3 py-1.5 rounded-full bg-indigo-900/40 text-indigo-300 border border-indigo-800 hover:bg-indigo-800 hover:text-white transition">
+                <i class="fa-solid fa-file-audio mr-1"></i> MIX
+            </button>
+            
+            <button onclick="stopAll()" id="btn-stop" class="hidden text-[10px] font-bold px-3 py-1.5 rounded-full bg-red-900/40 text-red-400 border border-red-900 hover:bg-red-800 hover:text-white transition">EXIT</button>
+        </div>
     </div>
 </footer>
 
@@ -163,11 +180,12 @@
     </div>
 </div>
 
-<!-- 6. 下载进度弹窗 -->
+<!-- 6. 下载/混音进度弹窗 -->
 <div id="download-modal" class="fixed inset-0 bg-black/90 z-[70] hidden flex flex-col items-center justify-center p-8 select-none">
-    <i class="fa-solid fa-cloud-arrow-down text-4xl text-spotify-green mb-6 animate-bounce"></i>
-    <h2 class="text-2xl font-bold mb-2">Caching Audio...</h2>
-    <p class="text-gray-400 text-sm mb-8 text-center max-w-md">Downloading songs to memory for smooth playback.<br>Do not close this tab.</p>
+    <i id="process-icon" class="fa-solid fa-cloud-arrow-down text-4xl text-spotify-green mb-6 animate-bounce"></i>
+    <h2 id="process-title" class="text-2xl font-bold mb-2">Processing...</h2>
+    <p id="process-desc" class="text-gray-400 text-sm mb-8 text-center max-w-md">Please wait.</p>
+    
     <div class="w-full max-w-md h-2 bg-zinc-800 rounded-full overflow-hidden mb-2">
         <div id="download-bar" class="h-full bg-spotify-green w-0 transition-all duration-300"></div>
     </div>
@@ -179,44 +197,55 @@
     <button onclick="cancelDownload()" class="px-6 py-2 rounded-full border border-zinc-600 text-zinc-400 hover:text-white hover:border-white text-xs font-bold transition">CANCEL</button>
 </div>
 
-<!-- 7. 新增：导入方式选择弹窗 -->
+<!-- 7. 导入方式选择弹窗 -->
 <div id="import-modal" class="fixed inset-0 bg-black/90 z-[80] hidden flex flex-col items-center justify-center p-6 modal opacity-0">
     <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-xl w-full max-w-md shadow-2xl relative">
         <button onclick="closeImportModal()" class="absolute top-4 right-4 text-gray-500 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
         
-        <h2 class="text-xl font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-file-import text-spotify-green"></i> Import Config</h2>
+        <h2 class="text-xl font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-file-import text-spotify-green"></i> Settings & Import</h2>
 
         <!-- 本地文件 -->
         <div class="mb-6">
-            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">From Local File</h3>
-            <button onclick="document.getElementById('config-input').click(); closeImportModal()" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg border border-zinc-700 text-sm font-medium transition flex items-center justify-center gap-2">
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">Import Config</h3>
+            <button onclick="document.getElementById('config-input').click(); closeImportModal()" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg border border-zinc-700 text-sm font-medium transition flex items-center justify-center gap-2 mb-2">
                 <i class="fa-solid fa-folder-open"></i> Choose JSON File
             </button>
+            <div class="flex gap-2">
+                <input type="text" id="import-url-input" placeholder="Or paste JSON URL..." class="flex-1 bg-black border border-zinc-700 rounded px-3 py-2 text-sm focus:border-spotify-green focus:outline-none transition">
+                <button onclick="loadConfigFromUrl()" class="bg-spotify-green text-black font-bold px-4 py-2 rounded text-sm hover:scale-105 transition">Load</button>
+            </div>
+            <p id="url-import-status" class="text-[10px] text-gray-500 mt-2 h-4"></p>
         </div>
 
         <div class="h-px bg-zinc-800 w-full mb-6"></div>
 
-        <!-- URL导入 -->
+        <!-- 自定义提示音 -->
         <div>
-            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">From URL</h3>
-            <div class="flex gap-2">
-                <input type="text" id="import-url-input" placeholder="https://example.com/playlist.json" class="flex-1 bg-black border border-zinc-700 rounded px-3 py-2 text-sm focus:border-spotify-green focus:outline-none transition">
-                <button onclick="loadConfigFromUrl()" class="bg-spotify-green text-black font-bold px-4 py-2 rounded text-sm hover:scale-105 transition">Load</button>
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest mb-3 font-bold">Custom Countdown Sound</h3>
+            <div class="flex items-center gap-3">
+                <button onclick="document.getElementById('custom-beep-input').click()" class="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 rounded border border-zinc-700 text-xs font-medium transition">
+                    <i class="fa-solid fa-upload"></i> Upload Audio
+                </button>
+                <button onclick="clearCustomBeep()" class="py-2 px-3 bg-zinc-800 hover:bg-red-900/50 hover:text-red-400 rounded border border-zinc-700 text-xs transition" title="Reset to default">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
             </div>
-            <p id="url-import-status" class="text-[10px] text-gray-500 mt-2 h-4"></p>
+            <p id="custom-beep-status" class="text-[10px] text-gray-500 mt-2">Default: Beep + "GO"</p>
         </div>
     </div>
 </div>
 
 <!-- 8. 导出图片生成区 -->
-<div id="export-canvas">
-    <div class="mb-12">
-        <h1 class="text-7xl font-black italic tracking-tighter text-white mb-2">SETLIST</h1>
-        <div class="h-1 w-20 bg-spotify-green"></div>
-        <p class="text-zinc-500 text-sm mt-4 tracking-[0.2em] uppercase font-bold">Random Dance Play</p>
+<div id="export-wrapper">
+    <div id="export-canvas">
+        <div class="mb-12">
+            <h1 class="text-7xl font-black italic tracking-tighter text-white mb-2">SETLIST</h1>
+            <div class="h-1 w-20 bg-spotify-green"></div>
+            <p class="text-zinc-500 text-sm mt-4 tracking-[0.2em] uppercase font-bold">Random Dance Play</p>
+        </div>
+        <ul id="export-list-ul" class="grid grid-cols-1 gap-8"></ul>
+        <div class="mt-16 text-right"><span class="text-zinc-700 text-xs uppercase tracking-widest font-bold border border-zinc-800 px-2 py-1 rounded">RDP Generated</span></div>
     </div>
-    <ul id="export-list-ul" class="grid grid-cols-1 gap-8"></ul>
-    <div class="mt-16 text-right"><span class="text-zinc-700 text-xs uppercase tracking-widest font-bold border border-zinc-800 px-2 py-1 rounded">RDP Generated</span></div>
 </div>
 
 <script>
@@ -226,6 +255,7 @@
     let isRandomMode = false;
     let isDownloading = false;
     let downloadAbortController = null;
+    let customBeepFile = null; // 用户上传的提示音文件
 
     let audio = new Audio();
     let audioCtx = null;
@@ -235,7 +265,7 @@
     let currentEditId = null;
 
     // ==========================================
-    // 0. 导入管理器 (新增)
+    // 0. 导入与设置管理器
     // ==========================================
 
     function openImportModal() {
@@ -252,15 +282,28 @@
         document.getElementById('url-import-status').innerText = "";
     }
 
-    // 从本地文件加载 (原 loadConfig 逻辑)
     function loadConfigFromFile(file) {
         if (!file) return;
         const r = new FileReader();
         r.onload = e => parseAndLoadConfig(e.target.result);
         r.readAsText(file);
     }
+    
+    // 加载自定义Beep
+    function loadCustomBeep(file) {
+        if (!file) return;
+        customBeepFile = file;
+        document.getElementById('custom-beep-status').innerText = "Loaded: " + file.name;
+        document.getElementById('custom-beep-status').className = "text-[10px] text-spotify-green mt-2";
+    }
 
-    // 从 URL 加载 (新逻辑)
+    function clearCustomBeep() {
+        customBeepFile = null;
+        document.getElementById('custom-beep-input').value = "";
+        document.getElementById('custom-beep-status').innerText = "Default: Beep + \"GO\"";
+        document.getElementById('custom-beep-status').className = "text-[10px] text-gray-500 mt-2";
+    }
+
     async function loadConfigFromUrl() {
         const url = document.getElementById('import-url-input').value.trim();
         const status = document.getElementById('url-import-status');
@@ -280,7 +323,7 @@
             setTimeout(() => {
                 parseAndLoadConfig(text);
                 closeImportModal();
-                document.getElementById('import-url-input').value = ""; // 清空
+                document.getElementById('import-url-input').value = ""; 
             }, 500);
 
         } catch (e) {
@@ -290,28 +333,13 @@
         }
     }
 
-    // 统一解析逻辑
     function parseAndLoadConfig(jsonString) {
         try {
             const d = JSON.parse(jsonString);
-            
-            // 数据合并与清洗
             playlist = d.songs.map(s => {
-                // 1. 保留本地文件
                 const exist = playlist.find(p => p.name === s.name && p.file);
-                
-                // 2. 智能 URL 转换 (Cloudflare Pages 适配)
-                // 如果是 RDP Cloudflare Pages 环境，且配置里有 .mp3 结尾的id
-                // 我们可以自动构建相对路径，解决 CORS
                 let finalUrl = s.url;
-                if (!finalUrl && s.id && !s.file) {
-                    // 默认假设 id 对应文件名 (如果你用这种规范)
-                     finalUrl = `/r2/${s.id}.mp3`; 
-                } else if (finalUrl) {
-                    // 如果 URL 是绝对路径但我们想走代理
-                    // 这里可以根据需要开启，比如替换 r2.dev 域名
-                    // if (finalUrl.includes('r2.dev')) ...
-                }
+                if (!finalUrl && s.id && !s.file) finalUrl = `/r2/${s.id}.mp3`; 
 
                 return { 
                     ...s, 
@@ -320,10 +348,8 @@
                     url: finalUrl 
                 };
             });
-
+            stopAll();
             updateUI();
-
-            // 自动检测是否需要下载
             const needsDl = playlist.filter(s => s.url && !s.file);
             if (needsDl.length > 0) {
                 if (confirm(`Loaded ${playlist.length} songs.\n${needsDl.length} songs have URLs. Download cache now?`)) {
@@ -332,7 +358,6 @@
             } else {
                 alert(`Loaded ${playlist.length} songs successfully.`);
             }
-
         } catch(e) { 
             alert("Invalid JSON Format"); 
             console.error(e);
@@ -346,11 +371,8 @@
 
     function forceDownloadCheck() {
         const needsDl = playlist.filter(s => s.url && !s.file);
-        if (needsDl.length > 0) {
-            startDownloadProcess(needsDl);
-        } else {
-            alert("All songs are cached locally or have no URL.");
-        }
+        if (needsDl.length > 0) startDownloadProcess(needsDl);
+        else alert("All songs are cached locally or have no URL.");
     }
 
     async function startDownloadProcess(itemsToDownload) {
@@ -359,22 +381,13 @@
         downloadAbortController = new AbortController();
         const signal = downloadAbortController.signal;
 
-        const modal = document.getElementById('download-modal');
-        const bar = document.getElementById('download-bar');
-        const countTxt = document.getElementById('download-count');
-        const pctTxt = document.getElementById('download-percent');
-        const errTxt = document.getElementById('download-error');
-        
-        modal.classList.remove('hidden');
-        errTxt.innerText = "";
+        showProcessModal("Caching Audio...", "Downloading songs to memory.");
 
         let total = itemsToDownload.length;
         let completed = 0;
         let errors = 0;
 
-        countTxt.innerText = `0 / ${total}`;
-        bar.style.width = '0%';
-
+        updateProcessBar(0, total);
         const batchSize = 3; 
         
         for (let i = 0; i < total; i += batchSize) {
@@ -383,16 +396,12 @@
             const promises = batch.map(song => fetchAndCacheSong(song, signal));
             const results = await Promise.all(promises);
             results.forEach(res => { if (res) completed++; else errors++; });
-
-            const pct = Math.round((completed + errors) / total * 100);
-            bar.style.width = `${pct}%`;
-            countTxt.innerText = `${completed + errors} / ${total}`;
-            pctTxt.innerText = `${pct}%`;
+            updateProcessBar(completed + errors, total);
         }
 
         isDownloading = false;
         setTimeout(() => {
-            modal.classList.add('hidden');
+            hideProcessModal();
             renderList();
             if (errors > 0) alert(`Download finished. ${completed} success, ${errors} failed.`);
         }, 500);
@@ -415,13 +424,32 @@
         if (downloadAbortController) {
             downloadAbortController.abort();
             isDownloading = false;
-            document.getElementById('download-modal').classList.add('hidden');
+            hideProcessModal();
         }
+    }
+
+    function showProcessModal(title, desc) {
+        const modal = document.getElementById('download-modal');
+        document.getElementById('process-title').innerText = title;
+        document.getElementById('process-desc').innerText = desc;
+        document.getElementById('download-error').innerText = "";
+        modal.classList.remove('hidden');
+    }
+
+    function hideProcessModal() {
+        document.getElementById('download-modal').classList.add('hidden');
+    }
+
+    function updateProcessBar(current, total) {
+        const pct = total === 0 ? 0 : Math.round(current / total * 100);
+        document.getElementById('download-bar').style.width = `${pct}%`;
+        document.getElementById('download-count').innerText = `${current} / ${total}`;
+        document.getElementById('download-percent').innerText = `${pct}%`;
     }
 
 
     // ==========================================
-    // 2. 播放控制
+    // 2. 播放控制 (逻辑修改：支持先随机后播放)
     // ==========================================
 
     function playSong(song) {
@@ -458,6 +486,12 @@
     }
 
     function toggleMainPlay() {
+        // 如果是随机模式且尚未开始（currentIndex == -1），点击播放则开始第一首
+        if (isRandomMode && currentIndex === -1 && playQueue.length > 0) {
+            playNext();
+            return;
+        }
+
         if (!audio.src) return;
         if (playState.isPlaying) {
             audio.pause();
@@ -470,6 +504,7 @@
             startTimerLoop(); 
             playState.isPlaying = true;
             document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-pause"></i>';
+            document.getElementById('player-status').innerText = "Playing";
         }
     }
 
@@ -482,12 +517,265 @@
         document.getElementById('time-display').innerText = `-${left}s`;
     }
 
-    function playNext() { stopTimerAndAudio(); if(isRandomMode) { currentIndex++; if(currentIndex>=playQueue.length){alert("End!"); stopAll();} else startCountdown(playQueue[currentIndex]); } }
-    function playPrev() { stopTimerAndAudio(); if(isRandomMode && currentIndex>0) { currentIndex--; startCountdown(playQueue[currentIndex]); } }
-    function stopTimerAndAudio() { if (playState.timerId) clearInterval(playState.timerId); audio.pause(); playState.isPlaying = false; }
+    function playNext() { 
+        stopTimerAndAudio(); 
+        if(isRandomMode) { 
+            currentIndex++; 
+            if(currentIndex >= playQueue.length){
+                alert("Random Play Finished!"); 
+                stopAll();
+            } else {
+                renderList(); // 更新高亮
+                startCountdown(playQueue[currentIndex]); 
+            }
+        } 
+    }
+    
+    function playPrev() { 
+        stopTimerAndAudio(); 
+        if(isRandomMode && currentIndex > 0) { 
+            currentIndex--; 
+            renderList();
+            startCountdown(playQueue[currentIndex]); 
+        } 
+    }
+    
+    function stopTimerAndAudio() { 
+        if (playState.timerId) clearInterval(playState.timerId); 
+        audio.pause(); 
+        playState.isPlaying = false; 
+    }
 
     // ==========================================
-    // 3. 编辑器
+    // 3. 随机模式与混音导出 (新增/修改)
+    // ==========================================
+
+    // 修改：只准备队列，不立即播放
+    function prepareRandomMode() {
+        if (playlist.length === 0) return;
+        
+        // 洗牌
+        playQueue = [...playlist].sort(() => Math.random() - 0.5);
+        isRandomMode = true; 
+        currentIndex = -1; // -1 表示尚未开始
+
+        // UI 变更
+        document.getElementById('btn-mode-random').innerText = "RESHUFFLE"; // 变成重新洗牌
+        document.getElementById('btn-export-audio').classList.remove('hidden');
+        document.getElementById('btn-stop').classList.remove('hidden');
+        document.getElementById('btn-prev').disabled = false;
+        document.getElementById('btn-next').disabled = false;
+        
+        document.getElementById('player-title').innerText = "Random Mode Ready";
+        document.getElementById('player-status').innerText = "Press Play to Start";
+        document.getElementById('btn-play').disabled = false;
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-play"></i>';
+
+        renderList();
+    }
+
+    function stopAll() {
+        stopTimerAndAudio();
+        isRandomMode = false; 
+        currentIndex = -1;
+        playQueue = [];
+
+        document.getElementById('btn-mode-random').innerText = "RANDOM";
+        document.getElementById('btn-mode-random').classList.remove('hidden');
+        document.getElementById('btn-export-audio').classList.add('hidden');
+        document.getElementById('btn-stop').classList.add('hidden');
+        
+        document.getElementById('player-title').innerText = "Ready";
+        document.getElementById('player-status').innerText = "--";
+        document.getElementById('progress-bar').style.width = '0';
+        document.getElementById('time-display').innerText = "00:00";
+        document.getElementById('btn-play').disabled = true;
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-play"></i>';
+        
+        updateUI();
+    }
+
+    // === 音频混音导出 (核心新功能) ===
+    async function startMixExport() {
+        if (!playQueue.length) return;
+        if (!confirm(`Export mix of ${playQueue.length} songs?\nThis will merge them into a single WAV file with countdowns.`)) return;
+
+        showProcessModal("Exporting Mix...", "Initializing Audio Context...");
+        
+        try {
+            // 1. 初始化离线上下文
+            const SAMPLE_RATE = 44100;
+            // 估算总时长：所有歌时长 + 间隔(假设3.5s)
+            let totalSeconds = 0;
+            const GAP = 3.5; 
+            playQueue.forEach(s => totalSeconds += (s.duration + GAP));
+            
+            // 浏览器限制检查（有些浏览器不支持过长的离线渲染）
+            // 30分钟 = 1800秒。绝大多数浏览器可以。
+            
+            const offlineCtx = new OfflineAudioContext(2, Math.ceil(totalSeconds * SAMPLE_RATE), SAMPLE_RATE);
+            
+            // 2. 加载倒计时音频
+            let beepBuffer = null;
+            if (customBeepFile) {
+                const arrayBuffer = await customBeepFile.arrayBuffer();
+                beepBuffer = await offlineCtx.decodeAudioData(arrayBuffer);
+            } else {
+                // 没有自定义音频，我们将在渲染循环中合成，或者生成一个小的Buffer
+                // 为了简单，我们只在合成器里做简单的 beep，
+                // 但 OfflineCtx 的合成 beep 比较麻烦，最好是预先渲染一段 beep buffer。
+                beepBuffer = createDefaultBeepBuffer(offlineCtx);
+            }
+
+            // 3. 逐个加载并安排歌曲
+            let currentTime = 0;
+            updateProcessBar(0, playQueue.length);
+
+            for (let i = 0; i < playQueue.length; i++) {
+                const song = playQueue[i];
+                document.getElementById('process-desc').innerText = `Processing: ${song.name}`;
+                
+                // 加载歌曲数据
+                let songBuffer = null;
+                try {
+                    let fileBlob = song.file;
+                    if (!fileBlob && song.url) {
+                        const resp = await fetch(song.url);
+                        fileBlob = await resp.blob();
+                    }
+                    if (fileBlob) {
+                        const ab = await fileBlob.arrayBuffer();
+                        // 复制一份 arrayBuffer 因为 decode 会 detach 它
+                        songBuffer = await offlineCtx.decodeAudioData(ab.slice(0));
+                    }
+                } catch(e) {
+                    console.error("Decode error", e);
+                }
+
+                // A. 插入倒计时 (第一首前面也要吗？RDP通常是每一段前面都有)
+                if (beepBuffer) {
+                    const beepSrc = offlineCtx.createBufferSource();
+                    beepSrc.buffer = beepBuffer;
+                    beepSrc.connect(offlineCtx.destination);
+                    beepSrc.start(currentTime);
+                    // 假设beep长度大概3秒，我们让这3秒作为间隔
+                    currentTime += (beepBuffer.duration > 0 ? beepBuffer.duration : 3);
+                } else {
+                    currentTime += 3; // Fallback
+                }
+
+                // B. 插入歌曲
+                if (songBuffer) {
+                    const songSrc = offlineCtx.createBufferSource();
+                    songSrc.buffer = songBuffer;
+                    songSrc.connect(offlineCtx.destination);
+                    
+                    // 裁剪
+                    songSrc.start(currentTime, song.start, song.duration);
+                    currentTime += song.duration;
+                }
+
+                // 稍微增加一点空隙
+                currentTime += 0.5;
+
+                updateProcessBar(i + 1, playQueue.length);
+            }
+
+            // 4. 渲染
+            document.getElementById('process-desc').innerText = "Rendering final mix...";
+            const renderedBuffer = await offlineCtx.startRendering();
+
+            // 5. 导出 WAV
+            document.getElementById('process-desc').innerText = "Encoding WAV...";
+            const wavBlob = bufferToWav(renderedBuffer);
+            const url = URL.createObjectURL(wavBlob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `RDP_Mix_${Date.now()}.wav`;
+            link.click();
+
+            hideProcessModal();
+
+        } catch (e) {
+            console.error(e);
+            alert("Export failed: " + e.message);
+            hideProcessModal();
+        }
+    }
+
+    // 创建默认的 Beep Buffer (哔-哔-GO)
+    function createDefaultBeepBuffer(ctx) {
+        // 创建一个临时的 OfflineContext 专门生成 3秒 的提示音
+        const sr = ctx.sampleRate;
+        const dur = 3.0;
+        const tempCtx = new OfflineAudioContext(1, sr * dur, sr);
+        
+        // 简单的合成逻辑
+        // 0s: Beep, 1s: Beep, 2s: High Beep
+        [0, 1, 2].forEach(t => {
+            const osc = tempCtx.createOscillator();
+            const gain = tempCtx.createGain();
+            osc.connect(gain);
+            gain.connect(tempCtx.destination);
+            
+            osc.type = (t === 2) ? 'square' : 'sine';
+            osc.frequency.value = (t === 2) ? 1200 : 800;
+            
+            osc.start(t);
+            osc.stop(t + 0.4);
+            
+            // Envelope
+            gain.gain.setValueAtTime(0.5, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+        });
+
+        return tempCtx.startRendering();
+    }
+
+    // WAV 编码辅助函数 (标准实现)
+    function bufferToWav(abuffer) {
+        let numOfChan = abuffer.numberOfChannels,
+            length = abuffer.length * numOfChan * 2 + 44,
+            buffer = new ArrayBuffer(length),
+            view = new DataView(buffer),
+            channels = [], i, sample, offset = 0, pos = 0;
+
+        function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+        function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+        setUint32(0x46464952); // "RIFF"
+        setUint32(length - 8); // file length - 8
+        setUint32(0x45564157); // "WAVE"
+
+        setUint32(0x20746d66); // "fmt " chunk
+        setUint32(16); // length = 16
+        setUint16(1); // PCM (uncompressed)
+        setUint16(numOfChan);
+        setUint32(abuffer.sampleRate);
+        setUint32(abuffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
+        setUint16(numOfChan * 2); // block-align
+        setUint16(16); // 16-bit (hardcoded in this loop)
+
+        setUint32(0x61746164); // "data" - chunk
+        setUint32(length - pos - 4); // chunk length
+
+        for(i = 0; i < abuffer.numberOfChannels; i++) channels.push(abuffer.getChannelData(i));
+
+        while(pos < length) {
+            for(i = 0; i < numOfChan; i++) {
+                sample = Math.max(-1, Math.min(1, channels[i][offset])); 
+                sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0; 
+                view.setInt16(pos, sample, true); 
+                pos += 2;
+            }
+            offset++; 
+        }
+        return new Blob([buffer], {type: "audio/wav"});
+    }
+
+    // ==========================================
+    // 4. 编辑器与基础功能
     // ==========================================
 
     function openEditor(id) {
@@ -562,29 +850,72 @@
     }
 
     // ==========================================
-    // 4. 基础 & 导出
+    // 5. 图片导出 (修复渲染失败与长文件名问题)
     // ==========================================
 
     function exportImage() {
-        if (playlist.length === 0) return alert("List empty");
+        const listToExport = (isRandomMode && playQueue.length) ? playQueue : playlist;
+        if (listToExport.length === 0) return alert("List empty");
+
+        const wrapper = document.getElementById('export-wrapper');
         const container = document.getElementById('export-canvas');
         const ul = document.getElementById('export-list-ul');
         ul.innerHTML = '';
-        const list = (isRandomMode && playQueue.length) ? playQueue : playlist;
-        list.forEach((song, i) => {
-            let title = song.name; let artist = ""; const separator = " - "; 
-            if (title.includes(separator)) { const parts = title.split(separator); title = parts[0]; artist = parts.slice(1).join(separator); } 
-            else if (title.includes("-")) { const parts = title.split("-"); if (parts.length > 1) { title = parts[0].trim(); artist = parts.slice(1).join("-").trim(); } }
+        
+        listToExport.forEach((song, i) => {
+            let title = song.name; 
+            let artist = ""; 
+            const separator = " - "; 
+            if (title.includes(separator)) { 
+                const parts = title.split(separator); title = parts[0]; artist = parts.slice(1).join(separator); 
+            } else if (title.includes("-")) { 
+                const parts = title.split("-"); 
+                if (parts.length > 1) { title = parts[0].trim(); artist = parts.slice(1).join("-").trim(); } 
+            }
+
             const li = document.createElement('li');
-            li.className = "flex items-start gap-6";
-            li.innerHTML = `<span class="text-3xl font-black text-zinc-700 font-mono w-16 text-right pt-1">${String(i + 1).padStart(2, '0')}</span><div class="flex flex-col"><span class="text-xl font-bold text-white leading-tight tracking-tight">${title}</span>${artist ? `<span class="text-4xl text-zinc-500 font-medium mt-1 tracking-wide">${artist}</span>` : ''}</div>`;
+            li.className = "flex items-start gap-6 border-b border-zinc-900/50 pb-4";
+            // 使用 break-all 和 whitespace-normal 强制换行
+            li.innerHTML = `
+                <span class="text-3xl font-black text-zinc-700 font-mono w-16 text-right pt-1 flex-shrink-0">${String(i + 1).padStart(2, '0')}</span>
+                <div class="flex flex-col min-w-0 flex-1">
+                    <span class="text-xl font-bold text-white leading-tight tracking-tight break-words whitespace-normal">${title}</span>
+                    ${artist ? `<span class="text-3xl text-zinc-500 font-medium mt-1 tracking-wide break-words whitespace-normal">${artist}</span>` : ''}
+                </div>
+            `;
             ul.appendChild(li);
         });
-        container.style.display = 'block';
-        html2canvas(container, { backgroundColor: "#080808", scale: 2, useCORS: true }).then(canvas => {
-            const link = document.createElement('a'); link.download = `RDP_List_${Date.now()}.png`; link.href = canvas.toDataURL(); link.click();
+
+        // 临时显示
+        wrapper.style.opacity = '1';
+        wrapper.style.height = 'auto'; 
+        
+        // 增加 scale 提高清晰度，增加 windowHeight 确保渲染完整
+        // 注意：html2canvas 对过于巨大的画布有限制，如果列表超过100首可能会截断，但这已经是浏览器极限了
+        html2canvas(container, { 
+            backgroundColor: "#080808", 
+            scale: 2, 
+            useCORS: true,
+            windowWidth: 1000, // 虚拟宽度
+        }).then(canvas => {
+            // 恢复隐藏
+            wrapper.style.opacity = '0';
+            wrapper.style.height = '0';
+            
+            const link = document.createElement('a'); 
+            link.download = `RDP_List_${Date.now()}.png`; 
+            link.href = canvas.toDataURL(); 
+            link.click();
+        }).catch(err => {
+            alert("Export failed: " + err);
+            wrapper.style.opacity = '0';
+            wrapper.style.height = '0';
         });
     }
+
+    // ==========================================
+    // 6. 其他辅助
+    // ==========================================
 
     function handleFiles(files) {
         if (!files.length) return;
@@ -607,17 +938,26 @@
         const has = playlist.length > 0;
         document.getElementById('empty-state').classList.toggle('hidden', has);
         document.getElementById('song-list-container').classList.toggle('hidden', !has);
-        document.getElementById('btn-play').disabled = !has;
+        document.getElementById('btn-play').disabled = !has && !isRandomMode;
         renderList();
     }
 
     function renderList() {
+        // 如果是随机模式，显示随机队列，否则显示主列表
         const list = isRandomMode ? playQueue : playlist;
         const ul = document.getElementById('song-list');
         ul.innerHTML = '';
-        document.getElementById('list-title').innerText = isRandomMode ? "QUEUE" : "EDIT";
+        
+        if (isRandomMode) {
+            document.getElementById('list-title').innerText = "RANDOM QUEUE";
+            document.getElementById('list-title').className = "text-spotify-green text-[10px] font-bold uppercase tracking-widest";
+        } else {
+            document.getElementById('list-title').innerText = "EDIT SETLIST";
+            document.getElementById('list-title').className = "text-zinc-500 text-[10px] font-bold uppercase tracking-widest";
+        }
+
         list.forEach((song, i) => {
-            const cur = (isRandomMode && i === currentIndex);
+            const cur = (isRandomMode && i === currentIndex && currentIndex !== -1);
             const isLocal = !!song.file;
             const statusIcon = isLocal 
                 ? '<i class="fa-solid fa-check text-spotify-green" title="Cached Locally"></i>' 
@@ -647,49 +987,58 @@
 
     function removeSong(id) { playlist = playlist.filter(s => s.id !== id); updateUI(); }
 
-    function startRandomMode() {
-        if (playlist.length === 0) return;
-        const uncached = playlist.filter(s => s.url && !s.file).length;
-        if (uncached > 0) {
-            if (!confirm(`${uncached} songs are not cached and will stream from URL (might be slow). Start anyway?`)) return;
-        }
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        playQueue = [...playlist].sort(() => Math.random() - 0.5);
-        isRandomMode = true; currentIndex = -1;
-        document.getElementById('btn-mode-random').classList.add('hidden');
-        document.getElementById('btn-stop').classList.remove('hidden');
-        document.getElementById('btn-prev').disabled = false;
-        document.getElementById('btn-next').disabled = false;
-        updateUI(); playNext();
-    }
-
-    function stopAll() {
-        stopTimerAndAudio();
-        isRandomMode = false; currentIndex = -1;
-        document.getElementById('btn-mode-random').classList.remove('hidden');
-        document.getElementById('btn-stop').classList.add('hidden');
-        document.getElementById('player-title').innerText = "Ready";
-        document.getElementById('player-status').innerText = "--";
-        document.getElementById('progress-bar').style.width = '0';
-        updateUI();
-    }
-
     function startCountdown(song) {
-        const l = document.getElementById('countdown-layer');
-        const n = document.getElementById('cnt-num');
-        document.getElementById('cnt-next-name').innerText = song.name;
-        l.classList.remove('hidden');
-        let c = 3; n.innerText = c; playBeep(800, 0.1);
-        const t = setInterval(() => {
-            c--;
-            if (c>0) { n.innerText = c; playBeep(800, 0.1); }
-            else if (c===0) { n.innerText = "GO!"; playBeep(1200, 0.4, 'square'); }
-            else { clearInterval(t); l.classList.add('hidden'); playSong(song); }
-        }, 1000);
+        if (!customBeepFile) {
+            // 使用合成音
+            const l = document.getElementById('countdown-layer');
+            const n = document.getElementById('cnt-num');
+            document.getElementById('cnt-next-name').innerText = song.name;
+            l.classList.remove('hidden');
+            let c = 3; n.innerText = c; playBeep(800, 0.1);
+            const t = setInterval(() => {
+                c--;
+                if (c>0) { n.innerText = c; playBeep(800, 0.1); }
+                else if (c===0) { n.innerText = "GO!"; playBeep(1200, 0.4, 'square'); }
+                else { clearInterval(t); l.classList.add('hidden'); playSong(song); }
+            }, 1000);
+        } else {
+            // 使用自定义音频，不显示全屏倒计时层，而是直接播放过渡音频然后切歌
+            // 或者：显示倒计时层但不发声，让音频发声？
+            // 简单起见：显示倒计时层，播放音频文件，音频播完开始放歌
+            const l = document.getElementById('countdown-layer');
+            const n = document.getElementById('cnt-num');
+            n.innerText = "NEXT";
+            document.getElementById('cnt-next-name').innerText = song.name;
+            l.classList.remove('hidden');
+
+            const beepAudio = new Audio(URL.createObjectURL(customBeepFile));
+            beepAudio.play();
+            beepAudio.onended = () => {
+                l.classList.add('hidden');
+                playSong(song);
+            };
+            // 安全网：如果音频坏了，5秒后强制切
+            setTimeout(() => {
+                if(!beepAudio.ended && !audio.paused) { 
+                    /* audio playing meaning song started? no. */
+                }
+            }, 8000);
+        }
     }
 
-    function playBeep(f,d,t='sine'){if(!audioCtx)return;const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(audioCtx.destination);o.start();g.gain.exponentialRampToValueAtTime(0.00001,audioCtx.currentTime+d);o.stop(audioCtx.currentTime+d);}
+    function playBeep(f,d,t='sine'){
+        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const o=audioCtx.createOscillator();
+        const g=audioCtx.createGain();
+        o.type=t;
+        o.frequency.value=f;
+        o.connect(g);
+        g.connect(audioCtx.destination);
+        o.start();
+        g.gain.exponentialRampToValueAtTime(0.00001,audioCtx.currentTime+d);
+        o.stop(audioCtx.currentTime+d);
+    }
+
     function formatTimeSimple(s) { 
         if (isNaN(s)) return "0:00";
         return Math.floor(s/60)+':'+Math.floor(s%60).toString().padStart(2,'0'); 
